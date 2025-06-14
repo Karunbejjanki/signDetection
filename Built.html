@@ -1,0 +1,264 @@
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1" name="viewport" />
+  <title>SignSpeak</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.8.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/facemesh@0.0.4/dist/facemesh.min.js"></script>
+</head>
+<body class="bg-white">
+  <div class="max-w-4xl mx-auto p-4">
+    <h1 class="text-center font-bold text-lg mb-4">
+      SignSpeak: Real-time Sign Language Interpretation
+    </h1>
+    <div class="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+      <video id="video" class="mx-auto mb-4 max-w-full h-auto rounded" width="600" height="400" autoplay playsinline muted></video>
+      <div class="flex justify-center">
+        <button id="interpretBtn" class="bg-teal-600 text-white px-4 py-2 rounded">
+          Interpret Sign
+        </button>
+      </div>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+      <textarea
+        id="outputText"
+        class="w-full border border-gray-300 rounded p-2 resize-y"
+        rows="4"
+        spellcheck="false"
+        readonly
+      ></textarea>
+    </div>
+  </div>
+  <script>
+    const video = document.getElementById('video');
+    const interpretBtn = document.getElementById('interpretBtn');
+    const outputText = document.getElementById('outputText');
+    let handModel = null;
+    let faceMeshModel = null;
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        await video.play();
+      } catch (err) {
+        alert('Could not access the camera. Please allow camera access and refresh the page.');
+      }
+    }
+    async function loadModels() {
+      outputText.value = 'Loading models...';
+      handModel = await handpose.load();
+      faceMeshModel = await facemesh.load();
+      outputText.value = 'Models loaded. Show a sign or facial expression and click "Interpret Sign".';
+    }
+    function isFingerExtended(landmarks, fingerIndices) {
+      const tip = landmarks[fingerIndices[0]];
+      const dip = landmarks[fingerIndices[1]];
+      const pip = landmarks[fingerIndices[2]];
+      const mcp = landmarks[fingerIndices[3]];
+      return tip[1] < dip[1] && dip[1] < pip[1] && pip[1] < mcp[1];
+    }
+    function isThumbExtended(landmarks) {
+      const tip = landmarks[4];
+      const ip = landmarks[3];
+      const mcp = landmarks[2];
+      const cmc = landmarks[1];
+      return tip[0] < ip[0] && ip[0] < mcp[0] && mcp[0] < cmc[0];
+    }
+    function isFingerFolded(landmarks, fingerIndices) {
+      const tip = landmarks[fingerIndices[0]];
+      const pip = landmarks[fingerIndices[2]];
+      return tip[1] > pip[1];
+    }
+    function interpretHandSign(landmarks) {
+      if (!landmarks) return null;
+      const thumbExtended = isThumbExtended(landmarks);
+      const indexExtended = isFingerExtended(landmarks, [8,7,6,5]);
+      const middleExtended = isFingerExtended(landmarks, [12,11,10,9]);
+      const ringExtended = isFingerExtended(landmarks, [16,15,14,13]);
+      const pinkyExtended = isFingerExtended(landmarks, [20,19,18,17]);
+      const indexFolded = isFingerFolded(landmarks, [8,7,6,5]);
+      const middleFolded = isFingerFolded(landmarks, [12,11,10,9]);
+      const ringFolded = isFingerFolded(landmarks, [16,15,14,13]);
+      const pinkyFolded = isFingerFolded(landmarks, [20,19,18,17]);
+      // I love you: thumb, index, pinky extended; middle and ring folded
+      if (thumbExtended && indexExtended && !middleExtended && !ringExtended && pinkyExtended) {
+        return "I love you";
+      }
+      // Hello: all fingers extended
+      if (thumbExtended && indexExtended && middleExtended && ringExtended && pinkyExtended) {
+        return "Hello";
+      }
+      // Yes: fist (all folded)
+      // if (!thumbExtended && !indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
+      //   return "Yes";
+      // }
+      // Yes: index and middle extended, others folded
+      if (!thumbExtended && indexExtended && middleExtended && !ringExtended && !pinkyExtended) {
+        return "Yes";
+      }
+      // Thank you: thumb folded, other fingers extended
+      if (!thumbExtended && indexExtended && middleExtended && ringExtended && pinkyExtended) {
+        return "Help me";
+      }
+      // OK sign: thumb and index finger tips touching
+      const dx = landmarks[4][0] - landmarks[8][0];
+      const dy = landmarks[4][1] - landmarks[8][1];
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 30) {
+        return "Super";
+      }
+      // Peace sign:Thumb, index and middle extended, ring and pinky folded
+      if (
+        indexExtended && middleExtended &&
+        ringFolded && pinkyFolded
+      ) {
+        return "Peace";
+      }
+      // Rock sign: index and pinky extended, middle and ring folded
+      if (
+        indexExtended && !middleExtended && !ringExtended && pinkyExtended
+      ) {
+        return "Rock it";
+      }
+      // Fist bump: thumb extended, others folded
+      if (
+        thumbExtended && !indexExtended && !middleExtended && !ringExtended && !pinkyExtended
+      ) {
+        return "Fist bump";
+      }
+      // Salute: index, middle, ring extended and together, thumb folded, pinky folded
+      if (
+        !thumbExtended && !pinkyExtended &&
+        indexExtended && middleExtended && ringExtended
+      ) {
+        const distIM = Math.abs(landmarks[8][0] - landmarks[12][0]);
+        const distMR = Math.abs(landmarks[12][0] - landmarks[16][0]);
+        if (distIM < 20 && distMR < 20) {
+          return "Salute";
+        }
+      }
+      // Pointing You (pointing index finger extended, others folded)
+      if (
+        indexExtended && !middleExtended && !ringExtended && !pinkyExtended
+      ) {
+        return "Pointing You";
+      }
+      return null;
+    }
+    // Detect tongue out using facemesh landmarks
+    async function detectTongueOut() {
+      if (!faceMeshModel) return false;
+      const predictions = await faceMeshModel.estimateFaces(video, false, false);
+      if (predictions.length === 0) return false;
+      const keypoints = predictions[0].scaledMesh;
+      const upperLip = keypoints[13];
+      const lowerLip = keypoints[14];
+      const tongueTip = keypoints[17];
+      const mouthOpenDist = Math.abs(lowerLip[1] - upperLip[1]);
+      const tongueForward = lowerLip[2] - tongueTip[2];
+      if (mouthOpenDist > 15 && tongueForward > 5) {
+        return true;
+      }
+      return false;
+    }
+    // Detect happy expression using facemesh landmarks (smile)
+    async function detectHappy() {
+      if (!faceMeshModel) return false;
+      const predictions = await faceMeshModel.estimateFaces(video, false, false);
+      if (predictions.length === 0) return false;
+      const keypoints = predictions[0].scaledMesh;
+      const leftMouth = keypoints[61];
+      const rightMouth = keypoints[291];
+      const upperLip = keypoints[13];
+      const lowerLip = keypoints[14];
+      const mouthWidth = Math.hypot(rightMouth[0] - leftMouth[0], rightMouth[1] - leftMouth[1]);
+      const mouthHeight = Math.abs(lowerLip[1] - upperLip[1]);
+      if (mouthWidth > 60 && mouthHeight < 25) {
+        return true;
+      }
+      return false;
+    }
+    // Detect sad expression using facemesh landmarks (downturned mouth corners)
+    async function detectSad() {
+      if (!faceMeshModel) return false;
+      const predictions = await faceMeshModel.estimateFaces(video, false, false);
+      if (predictions.length === 0) return false;
+      const keypoints = predictions[0].scaledMesh;
+      const leftMouth = keypoints[61];
+      const rightMouth = keypoints[291];
+      const upperLip = keypoints[13];
+      if ((leftMouth[1] - upperLip[1] > 15) && (rightMouth[1] - upperLip[1] > 15)) {
+        return true;
+      }
+      return false;
+    }
+    // Check if hand is near eyes and in crying position (hand near eyes)
+    function isHandNearEyes(handLandmarks, faceKeypoints) {
+      if (!handLandmarks || !faceKeypoints) return false;
+      // Eyes approx landmarks: left eye center (159), right eye center (386)
+      const leftEye = faceKeypoints[159];
+      const rightEye = faceKeypoints[386];
+      // Calculate average eye position
+      const eyeX = (leftEye[0] + rightEye[0]) / 2;
+      const eyeY = (leftEye[1] + rightEye[1]) / 2;
+      // Calculate average hand position (use wrist and middle finger mcp)
+      const wrist = handLandmarks[0];
+      const middleMCP = handLandmarks[9];
+      const handX = (wrist[0] + middleMCP[0]) / 2;
+      const handY = (wrist[1] + middleMCP[1]) / 2;
+      // Calculate distance between hand and eyes
+      const dist = Math.hypot(handX - eyeX, handY - eyeY);
+      // Threshold distance (pixels) to consider hand near eyes
+      return dist < 80;
+    }
+    interpretBtn.addEventListener('click', async () => {
+      if (!handModel || !faceMeshModel) {
+        outputText.value = 'Models not loaded yet. Please wait.';
+        return;
+      }
+      outputText.value = 'Interpreting sign...';
+      const handPredictions = await handModel.estimateHands(video, true);
+      const facePredictions = await faceMeshModel.estimateFaces(video, false, false);
+      const tongueOut = await detectTongueOut();
+      const happy = await detectHappy();
+      const sadFace = await detectSad();
+      if (tongueOut) {
+        outputText.value = "Tongue out detected";
+        return;
+      }
+      if (happy) {
+        outputText.value = "Happy expression detected";
+        return;
+      }
+      // Check sad by face expression or hand near eyes (crying pose)
+      if (sadFace) {
+        if (handPredictions.length > 0 && facePredictions.length > 0) {
+          const handLandmarks = handPredictions[0].landmarks;
+          const faceKeypoints = facePredictions[0].scaledMesh;
+          if (isHandNearEyes(handLandmarks, faceKeypoints)) {
+            outputText.value = "Sad expression detected (crying pose)";
+            return;
+          }
+        }
+        outputText.value = "Sad expression detected";
+        return;
+      }
+      if (handPredictions.length > 0) {
+        const landmarks = handPredictions[0].landmarks;
+        const interpretation = interpretHandSign(landmarks);
+        if (interpretation) {
+          outputText.value = interpretation;
+        } else {
+          outputText.value = "Sign not recognized";
+        }
+      } else {
+        outputText.value = 'No hand detected. Please show your hand clearly to the camera.';
+      }
+    });
+    startCamera();
+    loadModels();
+  </script>
+</body>
+</html>
